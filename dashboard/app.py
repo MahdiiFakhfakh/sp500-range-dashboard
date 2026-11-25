@@ -119,16 +119,21 @@ def candle_trace(c: pd.DataFrame, name="S&P 500"):
     )
 
 
-def add_range_box(fig, x0, x1, uq, dq, label_suffix="", show_text=True):
+def add_range_box(fig, x0, x1, uq, dq, label_suffix="", show_text=True, opacity=0.15, width=2, tag=""):
+    """Box = 80% band, dashed line = median, for the max (blue) and min (orange) over [x0, x1].
+
+    One level per window, not a path: the max / min is reached at some day inside the window.
+    """
     for q, col, nm in ((uq, C_MAX, "max"), (dq, C_MIN, "min")):
-        fig.add_shape(type="rect", x0=x0, x1=x1, y0=q[0], y1=q[2], fillcolor=col, opacity=0.15,
+        fig.add_shape(type="rect", x0=x0, x1=x1, y0=q[0], y1=q[2], fillcolor=col, opacity=opacity,
                       line_width=0, layer="below")
         fig.add_trace(go.Scatter(
-            x=[x0, x1], y=[q[1], q[1]], mode="lines", line=dict(color=col, width=2, dash="dash"),
+            x=[x0, x1], y=[q[1], q[1]], mode="lines", line=dict(color=col, width=width, dash="dash"),
             name=f"Predicted {nm}{label_suffix}",
-            hovertemplate=f"Predicted {nm}: %{{y:,.0f}}<br>80% band {q[0]:,.0f} – {q[2]:,.0f}<extra></extra>"))
+            hovertemplate=f"Predicted {nm}{label_suffix}: %{{y:,.0f}}<br>80% band {q[0]:,.0f} – {q[2]:,.0f}"
+                          "<extra></extra>"))
         if show_text:
-            fig.add_annotation(x=x1, y=q[1], text=f"{nm} {q[1]:,.0f}", showarrow=False, xanchor="left",
+            fig.add_annotation(x=x1, y=q[1], text=f"{tag}{nm} {q[1]:,.0f}", showarrow=False, xanchor="left",
                                font=dict(color="#191919", size=12), xshift=4)
 
 
@@ -175,15 +180,25 @@ tab_fc, tab_bt, tab_cmp, tab_pat, tab_how = st.tabs(
 with tab_fc:
     c = candles_for(start, as_of, tf)
     fig = go.Figure([candle_trace(c)])
-    fd = future_dates(as_of, h)
-    add_range_box(fig, fd[0], fd[-1], up_q, dn_q)
+    # Both horizons, so the chart shows how the possible range widens from one week to one month:
+    # the 1-month box behind, the 1-week box in front; the horizon picked in the sidebar is drawn stronger.
+    horizons = {5: "1 week", 21: "1 month"}
+    fds = {hh: future_dates(as_of, hh) for hh in horizons}
+    for hh in sorted(horizons, reverse=True):
+        uq, dq = q_prices(model, hh)
+        sel = hh == h
+        add_range_box(fig, fds[hh][0], fds[hh][-1], uq, dq, label_suffix=f" ({horizons[hh]})",
+                      opacity=0.22 if sel else 0.09, width=2 if sel else 1, tag=f"{horizons[hh]} ")
     fig.add_vline(x=as_of, line=dict(color="#999999", width=1, dash="dot"))
     if show_pat:
         add_patterns(fig, c)
     st.plotly_chart(base_layout(fig), width="stretch")
-    st.caption("Shaded boxes: 80% band for the highest high (blue) and lowest low (orange) between "
-               f"{fd[0]:%d %b} and {fd[-1]:%d %b %Y} (weekdays; exchange holidays not removed). "
-               "Dashed line: median forecast.")
+    st.caption(
+        "Shaded boxes: 80% band for the **highest high** (blue) and **lowest low** (orange) reached at any time "
+        f"within the next week (to {fds[5][-1]:%d %b}) and the next month (to {fds[21][-1]:%d %b %Y}). "
+        "Each forecast is one level for its whole window, not a price path, so its dashed median line is flat; "
+        "the wider month box shows how much further the price can travel with more time. "
+        f"The {horizons[h]} forecast (sidebar) is drawn stronger. Weekdays shown; exchange holidays not removed.")
 
     st.subheader("All models for this horizon")
     rows = []
